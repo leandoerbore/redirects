@@ -1,74 +1,36 @@
 package apiserver
 
 import (
-	"io"
+	"database/sql"
 	"net/http"
 
-	"github.com/gorilla/mux"
-	"github.com/leandoerbore/redirects/internal/app/store"
-	"github.com/sirupsen/logrus"
+	"github.com/gorilla/sessions"
+	"github.com/leandoerbore/redirects/internal/app/store/sqlstore"
 )
 
-type APIserver struct {
-	config *Config
-	logger *logrus.Logger
-	router *mux.Router
-	store  *store.Store
-}
-
-func New(config *Config) *APIserver {
-	return &APIserver{
-		config: config,
-		logger: logrus.New(),
-		router: mux.NewRouter(),
-	}
-}
-
-func (s *APIserver) Start() error {
-	if err := s.configureLogger(); err != nil {
-		return err
-	}
-
-	s.configureRouter()
-
-	if err := s.configureStore(); err != nil {
-		return err
-	}
-
-	s.logger.Info("Starting api server")
-
-	return http.ListenAndServe(s.config.BindAddr, s.router)
-}
-
-func (s *APIserver) configureLogger() error {
-	level, err := logrus.ParseLevel(s.config.LogLevel)
+func Start(config *Config) error {
+	db, err := newDB(config.DatabaseURL)
 	if err != nil {
-		return nil
-	}
-
-	s.logger.SetLevel(level)
-
-	return nil
-}
-
-func (s *APIserver) configureStore() error {
-	st := store.New(s.config.Store)
-	if err := st.Open(); err != nil {
 		return err
 	}
+	defer db.Close()
 
-	s.store = st
+	store := sqlstore.New(db)
+	sessionStore := sessions.NewCookieStore([]byte(config.SessionKey))
+	srv := newServer(store, sessionStore)
 
-	return nil
+	return http.ListenAndServe(config.BindAddr, srv)
 }
 
-func (s *APIserver) configureRouter() {
-	s.router.HandleFunc("/hello", s.handleHello())
-}
-
-func (s *APIserver) handleHello() http.HandlerFunc {
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "Hello")
+func newDB(databaseurl string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", databaseurl)
+	if err != nil {
+		return nil, err
 	}
+
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
